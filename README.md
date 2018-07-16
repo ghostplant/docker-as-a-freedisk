@@ -1,6 +1,6 @@
 # Docker as a Free Disk
 
-- Brief: the utitlity to wrap Docker Hub as a free web storage to store large blob data.
+- Brief: the utitlity to wrap Docker Hub as a free block chain storage to store large blob data.
 
 --------------------------------------------------------
 
@@ -12,13 +12,19 @@
 
 ### Usage Example:
 
+Step-1: Create a [DockerHub Account](https://hub.docker.com), and remember your username and password;
+
+Step-2: Use command tool to operate items in K/V store;
+
 ```sh
-# Upload a local blob file to Docker Hub Storage:
+# set the value of a certain key:
 
-./dockerdisk put './dockerdisk'
+DOCKER_ACCOUNT='username:passwd' ./dockerdisk put key1 hello-world
 
-# Download a remote blob file from Docker Hub Storage:
+# get the value of a certain key:
 
-./dockerdisk get '0019ad07bed81abf1f3bec2286b9478e6b95aeeb0129aea462b26332963eef56:dockerdisk'
-
+DOCKER_ACCOUNT='username:passwd' ./dockerdisk get key1
 ```
+
+Step-3: (Optional) You can make your data store private in *https://hub.docker.com/r/username/repo/~/settings/*
+

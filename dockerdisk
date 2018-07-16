@@ -3,62 +3,60 @@
 set -o pipefail
 set -e
 
+DOCKER_ACCOUNT="${DOCKER_ACCOUNT:-imagepub:imagepub}"
+
 help() {
-	echo -e "\n [Example Upload a local file to DockerHub]\n\n    $0 put 'file1.zip'\n\n [Example Download a local file from DockerHub]\n\n    $0 get '<sha256-string>'\n" >&2
+	echo -e "\n [Example Upload a local file to DockerHub]\n\n    $0 put a 'file1.zip'\n\n [Example Download a local file from DockerHub]\n\n    $0 get a\n" >&2
 	exit 1
 }
 
-! which curl sha256sum >/dev/null && echo "Please install dependencies to enable the following commands: curl sha256sum" >&2 && exit 1
+IMAGE_REPO="${DOCKER_ACCOUNT%:*}/repo"
 
 getToken() {
 	local response
-	response=$(curl -s -H "Authorization: Basic aW1hZ2VwdWI6aW1hZ2VwdWI=" "https://auth.docker.io/token?service=registry.docker.io&scope=repository:imagepub/blobs:$1")
+	response=$(curl -s -H "Authorization: Basic $(echo -n "$DOCKER_ACCOUNT" | base64)" "https://auth.docker.io/token?service=registry.docker.io&scope=repository:$IMAGE_REPO:$1")
 	echo "$response" | awk -F\" '{ for(i=1;i<NF;++i) if($i=="token") {print $(i+2); break;} }'
 }
 
 uploadBlob() {
-	local filepath="$1"
+	local key="$1"
 	local token=$(getToken "push,pull")
 	local uploadURL
 	
-	uploadURL=$(curl -siL -H "Authorization: Bearer $token" -X POST "https://registry-1.docker.io/v2/imagepub/blobs/blobs/uploads/" | grep 'Location:' | cut -d ' ' -f 2 | tr -d '[:space:]')
+	uploadURL=$(curl -siL -H "Authorization: Bearer $token" -X POST "https://registry-1.docker.io/v2/$IMAGE_REPO/blobs/uploads/" | grep 'Location:' | cut -d ' ' -f 2 | tr -d '[:space:]')
 	if [ "${uploadURL:0:8}" != "https://" ]; then
 		echo "Registry AUTH failed, please report this issue to github." >&2
 		exit 1
 	fi
 
-	blobDigest="$(sha256sum "$filepath" | cut -d ' ' -f 1)"
+	shift 1
+	blobDigest="$(echo -n "$@" | sha256sum | cut -d ' ' -f 1)"
 
-	filename=$(basename "$filepath")
-	echo -e "\n>> Uploading file '$filename' to DockerHub .. " >&2
-	curl -T "$filepath" --progress-bar -H "Authorization: Bearer $token" "$uploadURL&digest=sha256:$blobDigest" >/dev/null
-	echo -e ">> Done.\n" >&2
-	echo -e "Please record the sha256-string for its download, e.g.:\n" >&2
-	echo -e "  $0 get '$blobDigest:$filename'\n" >&2
+	curl -X PUT -d "$@" -s -H 'Content-Type: text/plain' -H "Authorization: Bearer $token" "$uploadURL&digest=sha256:$blobDigest"
+
+	curl -X PUT -s -H "Authorization: Bearer $token" -H 'Content-type: application/vnd.docker.distribution.manifest.v2+json' "https://index.docker.io/v2/$IMAGE_REPO/manifests/d-$key" \
+	  -d '{ "schemaVersion": 2, "mediaType": "application/vnd.docker.distribution.manifest.v2+json", "config": { "mediaType": "application/vnd.docker.container.image.v1+json", "digest": "sha256:'$blobDigest'" } }'
 }
 
 downloadBlob() {
 	local union="$1"
 	local token=$(getToken "pull")
-	
-	blobDigest=$(echo "$union" | cut -b 1-64)
-	filename=$(echo "$union" | cut -b 66-)
-	filename=${filename:-blobdata.bin}
-	echo -e "\n>> Downloading file '$filename' from DockerHub .. " >&2
-	RCODE=$(curl -L -w "%{http_code}" --progress-bar -H "Authorization: Bearer $token" "https://registry-1.docker.io/v2/imagepub/blobs/blobs/sha256:$blobDigest" -o "$filename")
+	local manifest=$(curl -s -H "Authorization: Bearer $token" -H "Accept: application/vnd.docker.distribution.manifest.v2+json" "https://index.docker.io/v2/$IMAGE_REPO/manifests/d-$1")
+
+	local shaBlob=$(echo "$manifest" | awk -F\" '{print $(NF-1)}')
+
+	RCODE=$(curl -L -w "%{http_code}" -s -H "Authorization: Bearer $token" "https://registry-1.docker.io/v2/$IMAGE_REPO/blobs/$shaBlob" -o "/tmp/$1")
 	if [[ "$RCODE" != "200" ]]; then
 		echo -e "Download failed: No access to this file (please report this issue to github).\n" >&2
-		rm -f "$filename"
-		exit 1
+	else
+		cat /tmp/$1
 	fi
-	echo -e ">> Done.\n\nThe file has been downloaded to: ./$filename" >&2
+	rm -f /tmp/$1
 }
 
-if [[ "$#" != "2" ]]; then
-	help
-elif [[ "$1" == "put" ]]; then
-	uploadBlob "$2"
-elif [[ "$1" == "get" ]]; then
+if [[ "$1" == "put" ]] && [[ "$#" == "3" ]]; then
+	uploadBlob "$2" "$3"
+elif [[ "$1" == "get" ]] && [[ "$#" == "2" ]]; then
 	downloadBlob "$2"
 else
 	help
